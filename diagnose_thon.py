@@ -1,140 +1,160 @@
-import os 
+import os
 import re
-from bs4 import BeautifulSoup
-import requests
+import logging
+from typing import List
 
+import requests
+from bs4 import BeautifulSoup
+from docx import Document
+
+from utils import openAIPayLoadHelper, parseOpenAIRespone
 from constants import SYSTEM_PROMPT, HOUSE_SEASON_1_TITLES, BASE_URL
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # OpenAI API Key
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-class ParsedObject: 
+
+class ParsedObject:
     """
-        Reads content from website page and structures the text read
+    Reads content from a website page and structures the text read.
     """
-    PARSED_MODE = 0 
+    PARSED_MODE = 0
     FULL_TEXT_MODE = 1
 
-    def __init__(self, url) -> None:
-        
-        self.recap_contents = None 
-        self.zebra_factor = None 
-        self.zebra_factor_contents = None 
-        
-        self.url = url 
-
-        self.parsed_contents = self.parse_url(self.url)
+    def __init__(self, url: str, episode_name: str) -> None:
+        self.url = url
+        self.episode_name = episode_name
         self.mode = ParsedObject.PARSED_MODE
+
+        self.recap_contents = None
+        self.zebra_factor = None
+        self.zebra_factor_contents = None
+
         try:
+            self.parsed_contents = self.parse_url(self.url)
             self.get_individual_contents()
-        except BaseException as error:
-            print(error)
-            print(f"Parsing failed for {url} ; Using the entire content for LLM prompt generation.")       
-            self.mode = ParsedObject.FULL_TEXT_MODE 
+        except Exception as error:
+            logger.error(f"Parsing failed for {url}: {error}")
+            logger.info("Using the entire content for LLM prompt generation.")
+            self.mode = ParsedObject.FULL_TEXT_MODE
+            self.parsed_contents = self.parse_url(self.url)
 
-    def get_individual_contents(self):
+    def parse_url(self, url: str) -> str:
+        """
+        Parses the URL content and returns the text.
+        """
+        response = requests.get(url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, "html.parser")
+        return soup.get_text()
 
-        self.recap_contents = self.get_contents_between(data=self.parsed_contents,
-                                                        s1="Recap\[\]",
-                                                        s2="[Clinic Patient\[\]|Clinic Patients\[\]]")    
-            
-        self.zebra_factor = int(re.findall("(?<=Zebra Factor[: ])(.*?)(?=/10\[\])", self.parsed_contents)[0])
-        
-        self.zebra_factor_contents = self.get_contents_between(data=self.parsed_contents,
-                                                               s1="Zebra Factor [0-9]+/10\[\]", 
-                                                               s2="[Trivia and cultural references\[\]|Trivia and Cultural References[]|Title\[\]]")
-    
-    def parse_url(self, url):
-        soup = BeautifulSoup(requests.get(url).content, "html.parser")
-        return soup.get_text()        
+    def get_individual_contents(self) -> None:
+        """
+        Extracts the recap contents, zebra factor, and zebra factor contents from the parsed contents.
+        """
+        self.recap_contents = self.get_contents_between(
+            data=self.parsed_contents,
+            s1=r"Recap\[\]",
+            s2=r"(Clinic Patient\[\]|Clinic Patients\[\])"
+        )
 
-    def get_contents_between(self, data, s1, s2):
-        y = re.findall(f'{s1}[\S\s]*{s2}', data)
-        return y[0]
-    
-    def get_prompt(self):
-        prompt = None 
-        if self.mode == ParsedObject.PARSED_MODE:
-            prompt = f""" Use the information from RECAP and ZEBRA FACTOR for creating your LLM prompt, required medical answer, and the disease name
-            ### RECAP ### 
-            {self.recap_contents}
-            ### ZEBRA FACTOR ### 
-            {self.zebra_factor_contents}
-            """
+        zebra_factor_match = re.search(r"(?<=Zebra Factor[: ])(.*?)(?=/10\[\])", self.parsed_contents)
+        if zebra_factor_match:
+            self.zebra_factor = int(zebra_factor_match.group())
         else:
-            prompt = f"""Use details in INFORMATION for creating your LLM prompt, required medical answer, and the disease name  
-            ### INFORMATION ### 
-            {self.parsed_contents}
-            """
+            raise ValueError("Zebra Factor not found.")
+
+        self.zebra_factor_contents = self.get_contents_between(
+            data=self.parsed_contents,
+            s1=r"Zebra Factor [0-9]+/10\[\]",
+            s2=r"(Trivia and cultural references\[\]|Trivia and Cultural References\[\]|Title\[\])"
+        )
+
+    @staticmethod
+    def get_contents_between(data: str, s1: str, s2: str) -> str:
+        """
+        Finds and returns the substring between two patterns.
+        """
+        pattern = f"{s1}[\S\s]*?{s2}"
+        matches = re.findall(pattern, data)
+        if matches:
+            return matches[0]
+        else:
+            raise ValueError("Contents between the specified patterns not found.")
+
+    def get_prompt(self) -> str:
+        """
+        Constructs the prompt for the LLM based on the parsed contents.
+        """
+        if self.mode == ParsedObject.PARSED_MODE:
+            prompt = (
+                "Use the information from RECAP and ZEBRA FACTOR for creating your LLM prompt, "
+                "required medical answer, and the disease name.\n"
+                "### RECAP ###\n"
+                f"{self.recap_contents}\n"
+                "### ZEBRA FACTOR ###\n"
+                f"{self.zebra_factor_contents}\n"
+            )
+        else:
+            prompt = (
+                "Use details in INFORMATION for creating your LLM prompt, required medical answer, and the disease name.\n"
+                "### INFORMATION ###\n"
+                f"{self.parsed_contents}\n"
+            )
         return prompt
 
+    def save_document(self, generated_text: str, root_dir: str = "./generated/") -> None:
+        """
+        Saves the generated text to a .docx document.
+        """
+        document = Document()
+        document.add_heading(self.episode_name, 0)
+        document.add_paragraph(generated_text)
 
-def openAIPayLoadHelper(prompt, api_key, gpt_system_prompt):
-    """
-        Helper function to construct the header and body of the OpenAI API call
-    """
-    
-    headers = {
-    "Content-Type": "application/json",
-    "Authorization": f"Bearer {api_key}"
-    }
+        # Ensure the directory exists
+        os.makedirs(root_dir, exist_ok=True)
 
-    payload = {
-    "model": "gpt-4o-mini",
-    "messages": [
-        {
-        "role": "system", 
-        "content": f"{gpt_system_prompt}"
-        },
-        {
-        "role": "user",
-        "content": [{
-            "type": "text",
-            "text": f"{prompt}"
-            },
-        ]
-        }
-    ],
-    "max_tokens": 1024
-    }
+        file_name = f"{self.episode_name.replace(' ', '_')}.docx"
+        file_path = os.path.join(root_dir, file_name)
+        document.save(file_path)
+        logger.info(f"Saved to {file_path}")
 
-    return (headers, payload)
-    
 
-def parseOpenAIRespone(response):
-    """
-        Parses the response from openAI API call and returns the output 
-    """
-    json_dict = response.json()
-    target_output = json_dict["choices"][0]["message"]["content"]
-    return target_output
+def main() -> None:
+    logger.info("=== Collecting data ===")
+    parsed_objs: List[ParsedObject] = []
 
-def main():
-
-    parsed_objs = []
-    print(" === Collecting data ===")
-
-    # collect all urls
-    for i, episode_name in enumerate(HOUSE_SEASON_1_TITLES):
-        url = f"{BASE_URL}{episode_name.replace(' ', '_')}" 
-        print(f"{episode_name} ::: {url}")
+    # Collect all URLs
+    for episode_name in HOUSE_SEASON_1_TITLES:
+        url = f"{BASE_URL}{episode_name.replace(' ', '_')}"
+        logger.info(f"{episode_name} ::: {url}")
         try:
-            x = ParsedObject(url)
-            parsed_objs += [x]
-        except BaseException as error:
-            print(error)
-            print(f"{url} skipped. ")
+            parsed_obj = ParsedObject(url, episode_name)
+            parsed_objs.append(parsed_obj)
+        except Exception as error:
+            logger.error(f"Failed to process {url}: {error}")
+            logger.info(f"{url} skipped.")
+        break
 
-    print(" === Generating medical question and answer ===")
-    # call the api 
-    for x in parsed_objs:
-        prompt = x.get_prompt()
-        # format the api payload
-        (headers, payload) = openAIPayLoadHelper(prompt, OPENAI_API_KEY, SYSTEM_PROMPT)
-        # make the post api call
+    logger.info("=== Generating medical questions and answers ===")
+    # Call the API
+    for parsed_obj in parsed_objs:
+        prompt = parsed_obj.get_prompt()
+
+        # Format the API payload
+        headers, payload = openAIPayLoadHelper(prompt, OPENAI_API_KEY, SYSTEM_PROMPT)
+
+        # Make the POST API call
         response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-        parsedOutput = parseOpenAIRespone(response)
-        print(parsedOutput)
+        response.raise_for_status()
+
+        parsed_output = parseOpenAIRespone(response)
+        logger.info(parsed_output)
+        parsed_obj.save_document(parsed_output)
 
 
 if __name__ == "__main__":
