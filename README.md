@@ -34,7 +34,7 @@ In this project, we:
 1. Ensure you have an OpenAI API key. You can get one by signing up at [OpenAI's website](https://beta.openai.com/signup/).
 2. Set up your environment variables:
    ```bash
-   export OPENAI_API_KEY="your_openai_api_key"
+   export OPENAI_API_KEY="Your API Key"
    ```
 3. Run the main script to generate medical questions and diagnoses from episode summaries:
    ```bash

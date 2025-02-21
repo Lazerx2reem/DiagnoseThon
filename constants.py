@@ -89,27 +89,6 @@ Neurocysticercosis
 """
 
 BASE_URL = "https://house.fandom.com/wiki/"
-HOUSE_SEASON_1_TITLES = [
-    "Pilot",
-    "Paternity",
-    "Occam's Razor",
-    "Maternity",
-    "Damned If You Do",
-    "The Socratic Method",
-    "Fidelity",
-    "Poison",
-    "DNR",
-    "Histories",
-    "Detox",
-    "Sports Medicine",
-    "Cursed",
-    "Control",
-    "Mob Rules",
-    "Heavy",
-    "Role Model",
-    "Babies & Bathwater",
-    "Kids",
-    "Love Hurts",
-    "Three Stories",
-    "Honeymoon"
+HOUSE_SEASON_8_TITLES = [
+    "Swan_Song"
 ]

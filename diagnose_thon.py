@@ -6,16 +6,24 @@ from typing import List
 import requests
 from bs4 import BeautifulSoup
 from docx import Document
+from dotenv import load_dotenv  # Import dotenv
 
 from utils import openAIPayLoadHelper, parseOpenAIRespone
-from constants import SYSTEM_PROMPT, HOUSE_SEASON_1_TITLES, BASE_URL
+from constants import SYSTEM_PROMPT, HOUSE_SEASON_8_TITLES, BASE_URL
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# OpenAI API Key
+# Load environment variables from .env
+load_dotenv()
+
+# OpenAI API Key from .env
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
+if not OPENAI_API_KEY:
+    logger.error("OpenAI API key is missing. Please add it to the .env file.")
+    exit(1)
 
 
 class ParsedObject:
@@ -30,6 +38,8 @@ class ParsedObject:
         self.episode_name = episode_name
         self.mode = ParsedObject.PARSED_MODE
 
+        #comment out
+        '''
         self.recap_contents = None
         self.zebra_factor = None
         self.zebra_factor_contents = None
@@ -41,8 +51,10 @@ class ParsedObject:
             logger.error(f"Parsing failed for {url}: {error}")
             logger.info("Using the entire content for LLM prompt generation.")
             self.mode = ParsedObject.FULL_TEXT_MODE
-            self.parsed_contents = self.parse_url(self.url)
-
+            '''
+        self.parsed_contents = self.parse_url(self.url)
+        ####
+        
     def parse_url(self, url: str) -> str:
         """
         Parses the URL content and returns the text.
@@ -62,7 +74,7 @@ class ParsedObject:
             s2=r"(Clinic Patient\[\]|Clinic Patients\[\])"
         )
 
-        zebra_factor_match = re.search(r"(?<=Zebra Factor[: ])(.*?)(?=/10\[\])", self.parsed_contents)
+        zebra_factor_match = re.search(r"Zebra Factor\s*[:]\s*(\d+)", self.parsed_contents)
         if zebra_factor_match:
             self.zebra_factor = int(zebra_factor_match.group())
         else:
@@ -90,6 +102,7 @@ class ParsedObject:
         """
         Constructs the prompt for the LLM based on the parsed contents.
         """
+        '''
         if self.mode == ParsedObject.PARSED_MODE:
             prompt = (
                 "Use the information from RECAP and ZEBRA FACTOR for creating your LLM prompt, "
@@ -99,8 +112,8 @@ class ParsedObject:
                 "### ZEBRA FACTOR ###\n"
                 f"{self.zebra_factor_contents}\n"
             )
-        else:
-            prompt = (
+        else:'''
+        prompt = (
                 "Use details in INFORMATION for creating your LLM prompt, required medical answer, and the disease name.\n"
                 "### INFORMATION ###\n"
                 f"{self.parsed_contents}\n"
@@ -129,7 +142,7 @@ def main() -> None:
     parsed_objs: List[ParsedObject] = []
 
     # Collect all URLs
-    for episode_name in HOUSE_SEASON_1_TITLES:
+    for episode_name in HOUSE_SEASON_8_TITLES:
         url = f"{BASE_URL}{episode_name.replace(' ', '_')}"
         logger.info(f"{episode_name} ::: {url}")
         try:
@@ -138,7 +151,6 @@ def main() -> None:
         except Exception as error:
             logger.error(f"Failed to process {url}: {error}")
             logger.info(f"{url} skipped.")
-        break
 
     logger.info("=== Generating medical questions and answers ===")
     # Call the API
